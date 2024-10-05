@@ -1,0 +1,71 @@
+from pyspark.sql import SparkSession
+from pymongo import MongoClient
+import time
+import decimal
+
+
+sql_username = 'your usename'
+sql_password = 'your password'
+sql_host = 'localhost'  
+sql_dbname = 'adbms2'
+sql_table = 'CLIENT_MASTER_111'
+
+
+mongo_host = 'localhost'
+mongo_dbname = "pipeline"
+mongo_collection_name = "transfer"
+
+
+spark = SparkSession.builder \
+    .appName("SQL to MongoDB Migration") \
+    .config("spark.jars.packages", "mysql:mysql-connector-java:8.0.33") \
+    .getOrCreate()
+
+mongo_client = MongoClient(f'mongodb://{mongo_host}:27017/')
+mongo_db = mongo_client[mongo_dbname]
+mongo_collection = mongo_db[mongo_collection_name]
+
+def convert_decimal_to_float(data):
+    """Recursively convert Decimal types to float."""
+    if isinstance(data, dict):
+        return {k: convert_decimal_to_float(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_decimal_to_float(i) for i in data]
+    elif isinstance(data, decimal.Decimal):
+        return float(data)
+    return data
+
+def migrate_data():
+    try:
+      
+        jdbc_url = f"jdbc:mysql://{sql_host}/{sql_dbname}"
+        properties = {
+            "user": sql_username,
+            "password": sql_password,
+            "driver": "com.mysql.cj.jdbc.Driver"
+        }
+        
+        df = spark.read.jdbc(url=jdbc_url, table=sql_table, properties=properties)
+        
+     
+        data_dict = [row.asDict() for row in df.collect()]
+        
+      
+        data_dict = convert_decimal_to_float(data_dict)
+        
+        if data_dict:
+            mongo_collection.insert_many(data_dict)
+            print("Data migrated to MongoDB")
+        else:
+            print("No data found to migrate")
+    
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def main():
+    while True:
+        migrate_data()
+        time.sleep(43200)  
+
+if __name__ == "__main__":
+    main()
